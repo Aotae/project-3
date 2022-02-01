@@ -5,6 +5,7 @@ from a scrambled string)
 """
 
 import flask
+from flask import request
 import logging
 
 # Our modules
@@ -46,25 +47,14 @@ except ValueError:
 def index():
     """The main page of the application"""
     flask.g.vocab = WORDS.as_list()
-    flask.session["target_count"] = min(
-        len(flask.g.vocab), CONFIG.SUCCESS_AT_COUNT)
-    flask.session["jumble"] = jumbled(
-        flask.g.vocab, flask.session["target_count"], seed=None if not SEED or SEED < 0 else SEED)
+    flask.session["target_count"] = min(len(flask.g.vocab), CONFIG.SUCCESS_AT_COUNT)
+    flask.session["jumble"] = jumbled(flask.g.vocab, flask.session["target_count"], seed=None if not SEED or SEED < 0 else SEED)
+
     flask.session["matches"] = []
     app.logger.debug("Session variables have been set")
     assert flask.session["matches"] == []
     assert flask.session["target_count"] > 0
     app.logger.debug("At least one seems to be set correctly")
-    return flask.render_template('vocab.html')
-
-
-@app.route("/keep_going")
-def keep_going():
-    """
-    After initial use of index, we keep the same scrambled
-    word and try to get more matches
-    """
-    flask.g.vocab = WORDS.as_list()
     return flask.render_template('vocab.html')
 
 
@@ -79,7 +69,7 @@ def success():
 #   a JSON request handler
 #######################
 
-@app.route("/_check", methods=["POST"])
+@app.route("/_check", methods = ['POST','GET'])
 def check():
     """
     User has submitted the form with a word ('attempt')
@@ -89,38 +79,39 @@ def check():
     made only from the jumble letters, and not a word they
     already found.
     """
-    app.logger.debug("Entering check")
 
+    txt = request.args.get("text", type=str)
     # The data we need, from form and from cookie
-    text = flask.request.form["attempt"]
     jumble = flask.session["jumble"]
-    matches = flask.session.get("matches", [])  # Default to empty list
-
+    matches = flask.session.get("matches")
     # Is it good?
-    in_jumble = LetterBag(jumble).contains(text)
-    matched = WORDS.has(text)
-
+    in_jumble = LetterBag(jumble).contains(txt)
+    matched = WORDS.has(txt)
+    #app.logger.debug(WORDS)
     # Respond appropriately
-    if matched and in_jumble and not (text in matches):
+    app.logger.debug("Entering check")
+    if matched and in_jumble and not (txt in matches):
         # Cool, they found a new word
-        matches.append(text)
+        matches.append(txt)
         flask.session["matches"] = matches
-    elif text in matches:
-        flask.flash("You already found {}".format(text))
-    elif not matched:
-        flask.flash("{} isn't in the list of words".format(text))
+        a = len(matches)
+        b = (flask.session["target_count"])
+        if(a>=b):
+            app.logger.info("we got here!")
+            return flask.jsonify(case ={"request":"success"})
+        else:
+            return flask.jsonify(case = {"result":matches,"req":txt})
+
+    elif txt in matches:
+        return flask.jsonify(case = {"result" : "1","req":txt})
     elif not in_jumble:
-        flask.flash(
-            '"{}" can\'t be made from the letters {}'.format(text, jumble))
+        return flask.jsonify(case = {"result" : "3","req":txt})
+    elif not matched:
+        return flask.jsonify(case = {"result" : "2","req":txt})
     else:
         app.logger.debug("This case shouldn't happen!")
         assert False  # Raises AssertionError
-
-    # Choose page:  Solved enough, or keep going?
-    if len(matches) >= flask.session["target_count"]:
-       return flask.redirect(flask.url_for("success"))
-    else:
-       return flask.redirect(flask.url_for("keep_going"))
+   
 
 
 ###############
@@ -179,7 +170,7 @@ def error_403(e):
 if __name__ == "__main__":
     if CONFIG.DEBUG:
         app.debug = True
-        app.logger.setLevel(logging.DEBUG)
+        app.logger.setLevel(logging.INFO)
         app.logger.info(
             "Opening for global access on port {}".format(CONFIG.PORT))
     app.run(port=CONFIG.PORT, host="0.0.0.0", debug=CONFIG.DEBUG)
